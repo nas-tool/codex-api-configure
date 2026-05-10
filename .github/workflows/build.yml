@@ -1,0 +1,96 @@
+name: Build Desktop Apps
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS x86_64 DMG
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+            artifact_name: codex-api-configure-macos-x86_64
+            artifact_path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          - name: macOS arm64 DMG
+            runner: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+            artifact_name: codex-api-configure-macos-arm64
+            artifact_path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          - name: Windows x86_64 EXE
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            artifact_name: codex-api-configure-windows-x86_64
+            artifact_path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          - name: Windows arm64 EXE
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            bundles: nsis
+            artifact_name: codex-api-configure-windows-arm64
+            artifact_path: src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri app
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
